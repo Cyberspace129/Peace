@@ -1,6 +1,6 @@
 using UnityEngine;
 
-[CreateAssetMenu(fileName = "Biological", menuName = "Scriptable Objects/Biological")]
+[CreateAssetMenu(fileName = "Biological", menuName = "Particle Physics/Biological")]
 public class Biological : ScriptableObject
 {
     
