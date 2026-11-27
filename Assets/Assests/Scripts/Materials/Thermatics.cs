@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
+namespace ParticleChemistry
+{
+
 /// <summary>
 /// Thermatics is a ScriptableObject database for thermal material behaviour.
 ///
@@ -402,7 +405,8 @@ public class Thermatics : ScriptableObject
             ThermalMaterialProfile profile,
             float massKg,
             float temperatureC,
-            ThermalPhase phase)
+            ThermalPhase phase,
+            float initialCombustibleMassKg = -1f)
         {
             this.profile = profile;
             this.initialMassKg = massKg;
@@ -411,7 +415,12 @@ public class Thermatics : ScriptableObject
             this.phase = phase;
 
             liquidFraction = phase == ThermalPhase.Liquid ? 1f : 0f;
-            remainingFuelMassKg = profile.Combustion.Combustible ? massKg : 0f;
+            // Moisture and other non-fuel constituents must not automatically
+            // become combustible simply because they are part of the sample mass.
+            float fuelMass = initialCombustibleMassKg < 0f
+                ? massKg
+                : Mathf.Clamp(initialCombustibleMassKg, 0f, massKg);
+            remainingFuelMassKg = profile.Combustion.Combustible ? fuelMass : 0f;
         }
 
         internal void SetTemperature(float value)
@@ -443,6 +452,11 @@ public class Thermatics : ScriptableObject
         internal void AddChar(float amountKg)
         {
             charMassKg += Mathf.Max(0f, amountKg);
+        }
+
+        internal void AddExternalMass(float amountKg)
+        {
+            massKg += Mathf.Max(0f, amountKg);
         }
 
         internal void ConsumeFuel(float amountKg, float charYieldFraction)
@@ -566,6 +580,34 @@ public class Thermatics : ScriptableObject
     }
 
     /// <summary>
+    /// Imports missing thermal profiles from an explicitly supplied Material database.
+    /// This overload lets the central Material asset coordinate the subsystems without
+    /// requiring circular asset references between every subsystem and the material database.
+    /// Existing profiles are preserved.
+    /// </summary>
+    public void AddMissingProfilesFromMaterialDatabase(ParticleChemistry.Material database)
+    {
+        if (database == null)
+            throw new ArgumentNullException(nameof(database));
+
+        if (profiles == null)
+            profiles = new List<ThermalMaterialProfile>();
+
+        int added = 0;
+        foreach (ParticleChemistry.Material.MaterialDefinition material in database.Materials)
+        {
+            if (material == null || string.IsNullOrWhiteSpace(material.Id) || HasProfile(material.Id))
+                continue;
+
+            profiles.Add(CreateProfileFromMaterial(material));
+            added++;
+        }
+
+        if (added > 0)
+            MarkAssetDirty();
+    }
+
+    /// <summary>
     /// Rebuilds all thermal profiles from the Material database.
     /// WARNING: this overwrites custom thermal profile settings.
     /// </summary>
@@ -605,7 +647,7 @@ public class Thermatics : ScriptableObject
             latentHeatOfFusionJPerKg: -1f,
             referencePhase: phase,
             notes: "Generated from the Material database. Add expansion, phase-transition, combustion, degradation, and temperature-curve data as required.",
-            hasMeltingPoint: material.MeltingPointC >= 0f,
+            hasMeltingPoint: material.MeltingPointC != -1f,
             hasFreezingPoint: false);
     }
 
@@ -707,7 +749,8 @@ public class Thermatics : ScriptableObject
     public ThermalSample CreateSample(
         string materialId,
         float massKg,
-        float initialTemperatureC = 20f)
+        float initialTemperatureC = 20f,
+        float initialCombustibleMassKg = -1f)
     {
         if (massKg <= 0f || float.IsNaN(massKg) || float.IsInfinity(massKg))
             throw new ArgumentOutOfRangeException(nameof(massKg), "Mass must be a finite value greater than zero.");
@@ -723,7 +766,13 @@ public class Thermatics : ScriptableObject
         ThermalMaterialProfile profile = GetProfile(materialId);
         ThermalPhase phase = DeterminePhase(profile, initialTemperatureC);
 
-        return new ThermalSample(profile, massKg, initialTemperatureC, phase);
+        if (initialCombustibleMassKg < -1f ||
+            float.IsNaN(initialCombustibleMassKg) ||
+            float.IsInfinity(initialCombustibleMassKg))
+            throw new ArgumentOutOfRangeException(nameof(initialCombustibleMassKg));
+
+        return new ThermalSample(
+            profile, massKg, initialTemperatureC, phase, initialCombustibleMassKg);
     }
 
     private static ThermalPhase DeterminePhase(
@@ -838,6 +887,25 @@ public class Thermatics : ScriptableObject
     {
         if (sample == null)
             throw new ArgumentNullException(nameof(sample));
+    }
+
+    /// <summary>
+    /// Applies mass gained or lost by another material subsystem (for example
+    /// fluid absorption, corrosion, wear, or biological decomposition) to the
+    /// thermal sample so all systems continue to describe the same physical body.
+    /// Positive values add mass; negative values remove mass.
+    /// This does not add absorbed fluid to the combustible-fuel pool.
+    /// </summary>
+    public void ApplyExternalMassChange(ThermalSample sample, float massChangeKg)
+    {
+        ValidateSample(sample);
+        if (float.IsNaN(massChangeKg) || float.IsInfinity(massChangeKg))
+            throw new ArgumentOutOfRangeException(nameof(massChangeKg));
+
+        if (massChangeKg < 0f)
+            sample.ApplyDegradation(0f, -massChangeKg);
+        else if (massChangeKg > 0f)
+            sample.AddExternalMass(massChangeKg);
     }
 
     // ============================================================
@@ -1507,4 +1575,5 @@ public class Thermatics : ScriptableObject
         else
             Debug.LogError($"Thermatics: validation found {errors} profile errors.", this);
     }
+}
 }

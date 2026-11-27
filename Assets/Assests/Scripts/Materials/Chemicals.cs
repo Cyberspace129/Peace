@@ -1408,11 +1408,39 @@ namespace ParticleChemistry
         [SerializeField] private List<CorrosionProfile> corrosionProfiles = new List<CorrosionProfile>();
         public IReadOnlyList<CorrosionProfile> CorrosionProfiles => corrosionProfiles;
 
-        public CorrosionProfile GetCorrosionProfile(string materialId)
+        public bool HasCorrosionProfile(string materialId)
         {
+            if (string.IsNullOrWhiteSpace(materialId) || corrosionProfiles == null)
+                return false;
+
             foreach (CorrosionProfile profile in corrosionProfiles)
                 if (profile != null && string.Equals(profile.MaterialId, materialId, StringComparison.OrdinalIgnoreCase))
-                    return profile;
+                    return true;
+            return false;
+        }
+
+        public bool TryGetCorrosionProfile(string materialId, out CorrosionProfile result)
+        {
+            if (corrosionProfiles != null)
+            {
+                foreach (CorrosionProfile profile in corrosionProfiles)
+                {
+                    if (profile != null && string.Equals(profile.MaterialId, materialId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result = profile;
+                        return true;
+                    }
+                }
+            }
+
+            result = null;
+            return false;
+        }
+
+        public CorrosionProfile GetCorrosionProfile(string materialId)
+        {
+            if (TryGetCorrosionProfile(materialId, out CorrosionProfile profile))
+                return profile;
             throw new KeyNotFoundException("No corrosion profile is registered for material '" + materialId + "'.");
         }
 
@@ -1559,6 +1587,7 @@ namespace ParticleChemistry
             if (string.IsNullOrWhiteSpace(definition.Id)) throw new ArgumentException("Species ID is required.");
             if (TryGetSpecies(definition.Id, out _)) throw new InvalidOperationException("Species ID already exists: " + definition.Id);
             species.Add(definition);
+            MarkAssetDirty();
         }
 
         public void RegisterReaction(ChemicalReactionDefinition definition)
@@ -1568,6 +1597,7 @@ namespace ParticleChemistry
                 if (item != null && string.Equals(item.Id, definition.Id, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Reaction ID already exists: " + definition.Id);
             reactions.Add(definition);
+            MarkAssetDirty();
         }
 
         public void RegisterCorrosionProfile(CorrosionProfile profile)
@@ -1577,6 +1607,7 @@ namespace ParticleChemistry
                 if (item != null && string.Equals(item.MaterialId, profile.MaterialId, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Corrosion profile already exists for: " + profile.MaterialId);
             corrosionProfiles.Add(profile);
+            MarkAssetDirty();
         }
 
         public void RegisterContaminationRule(ContaminationRule rule)
@@ -1586,6 +1617,14 @@ namespace ParticleChemistry
                 if (item != null && string.Equals(item.ContaminantSpeciesId, rule.ContaminantSpeciesId, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Contamination rule already exists for: " + rule.ContaminantSpeciesId);
             contaminationRules.Add(rule);
+            MarkAssetDirty();
+        }
+
+        private void MarkAssetDirty()
+        {
+#if UNITY_EDITOR
+            UnityEditor.EditorUtility.SetDirty(this);
+#endif
         }
     }
 }
